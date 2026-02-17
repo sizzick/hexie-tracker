@@ -497,6 +497,7 @@ function startListener() {
 
 function hideLoading() {
   const ls = document.getElementById('loading-screen');
+  if (!ls) return; // already removed on a previous snapshot
   ls.classList.add('hidden');
   setTimeout(() => ls.remove(), 500);
 }
