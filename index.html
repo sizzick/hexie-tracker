@@ -45,7 +45,7 @@
   #loading-screen {
     position: fixed; inset: 0; background: var(--cream);
     display: flex; flex-direction: column; align-items: center; justify-content: center;
-    z-index: 1000; gap: 1rem;
+    z-index: 1000; gap: 1rem; padding: 2rem; text-align: center;
     transition: opacity 0.4s;
   }
   #loading-screen.hidden { opacity: 0; pointer-events: none; }
@@ -56,11 +56,39 @@
     border-radius: 50%;
     animation: spin 0.8s linear infinite;
   }
+  .spinner.hidden { display: none; }
   @keyframes spin { to { transform: rotate(360deg); } }
   .loading-text {
     font-family: 'Playfair Display', serif; font-size: 1.1rem;
     color: var(--text-light); font-style: italic;
   }
+  #error-box {
+    display: none; max-width: 520px;
+    background: var(--warm-white); border: 1px solid rgba(160,56,107,0.25);
+    border-radius: 14px; padding: 1.75rem; box-shadow: 0 2px 16px var(--shadow);
+  }
+  #error-box h2 {
+    font-family: 'Playfair Display', serif; font-size: 1.3rem;
+    color: #a0386b; margin-bottom: 0.75rem;
+  }
+  #error-box p { font-size: 0.9rem; color: var(--text-mid); line-height: 1.6; margin-bottom: 0.6rem; }
+  #error-box code {
+    display: block; background: var(--linen); border-radius: 7px;
+    padding: 0.75rem 1rem; font-size: 0.82rem; color: var(--text-dark);
+    white-space: pre; overflow-x: auto; margin: 0.5rem 0 1rem; line-height: 1.5;
+  }
+  #error-box .error-detail {
+    font-size: 0.78rem; color: #a0386b; background: rgba(160,56,107,0.07);
+    border-radius: 6px; padding: 0.5rem 0.75rem; margin-top: 0.5rem;
+    font-family: monospace; word-break: break-all;
+  }
+  #error-box .btn-retry {
+    margin-top: 1rem; padding: 0.6rem 1.5rem;
+    background: linear-gradient(135deg, var(--deep-purple), var(--mid-purple));
+    color: white; border: none; border-radius: 8px; font-size: 0.9rem;
+    font-weight: 700; cursor: pointer; letter-spacing: 0.04em;
+  }
+  #error-box .btn-retry:hover { opacity: 0.9; }
 
   header { text-align: center; margin-bottom: 2.5rem; }
   .hex-icon {
@@ -251,8 +279,25 @@
 
 <!-- Loading screen -->
 <div id="loading-screen">
-  <div class="spinner"></div>
-  <div class="loading-text">Loading your hexies…</div>
+  <div class="spinner" id="spinner"></div>
+  <div class="loading-text" id="loading-text">Loading your hexies…</div>
+  <div id="error-box">
+    <h2>⬡ Couldn't connect to Firebase</h2>
+    <p>The most common cause is that <strong>Firestore security rules are still set to deny access</strong>. Fix it in 30 seconds:</p>
+    <p><strong>1.</strong> Open your <a href="https://console.firebase.google.com" target="_blank" style="color:var(--purple)">Firebase console</a> → <strong>the-hexie-quilt</strong> → <strong>Firestore Database → Rules</strong></p>
+    <p><strong>2.</strong> Replace all the text there with this and click <strong>Publish</strong>:</p>
+    <code>rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /hexie-entries/{document} {
+      allow read, write: if true;
+    }
+  }
+}</code>
+    <p><strong>3.</strong> Come back here and click Retry (or press Ctrl+Shift+R / Cmd+Shift+R).</p>
+    <div class="error-detail" id="error-detail"></div>
+    <button class="btn-retry" onclick="location.reload()">↺ Retry</button>
+  </div>
 </div>
 
 <div class="hex-deco hex-deco-1">⬡</div>
@@ -440,8 +485,12 @@ function startListener() {
     },
     (err) => {
       console.error(err);
-      setSyncStatus('error', 'Sync error — check console');
-      hideLoading();
+      setSyncStatus('error', 'Sync error');
+      // Show the on-screen error box instead of hiding the loading screen
+      document.getElementById('spinner').classList.add('hidden');
+      document.getElementById('loading-text').style.display = 'none';
+      document.getElementById('error-box').style.display = 'block';
+      document.getElementById('error-detail').textContent = 'Error: ' + (err.code || err.message || err);
     }
   );
 }
