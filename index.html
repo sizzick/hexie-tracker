@@ -1,0 +1,789 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Hexie Quilt Tracker</title>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;1,400&family=Lato:wght@300;400;700&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+  :root {
+    --cream: #f2eef8;
+    --warm-white: #faf8fd;
+    --linen: #e2d9f0;
+    --lavender: #b09fd4;
+    --purple: #7c5cbf;
+    --deep-purple: #5a3d99;
+    --mid-purple: #9370cc;
+    --sage: #7a9e7e;
+    --deep-sage: #4a7a52;
+    --muted-gold: #c9a84c;
+    --soft-purple: #d4c5ee;
+    --text-dark: #2d1f4a;
+    --text-mid: #5a3d99;
+    --text-light: #8b74b8;
+    --shadow: rgba(90,61,153,0.10);
+    --card-border: rgba(176,159,212,0.25);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background-color: var(--cream);
+    background-image:
+      radial-gradient(ellipse at 15% 10%, rgba(124,92,191,0.10) 0%, transparent 55%),
+      radial-gradient(ellipse at 85% 85%, rgba(176,159,212,0.12) 0%, transparent 50%),
+      url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%237c5cbf' fill-opacity='0.04'%3E%3Cpath d='M30 0l15 8.66v17.32L30 34.64 15 25.98V8.66z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E");
+    font-family: 'Lato', sans-serif;
+    color: var(--text-dark);
+    min-height: 100vh;
+  }
+
+  .container { max-width: 1100px; margin: 0 auto; padding: 2rem 1.25rem 4rem; }
+
+  /* LOADING SCREEN */
+  #loading-screen {
+    position: fixed; inset: 0; background: var(--cream);
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    z-index: 1000; gap: 1rem;
+    transition: opacity 0.4s;
+  }
+  #loading-screen.hidden { opacity: 0; pointer-events: none; }
+  .spinner {
+    width: 44px; height: 44px;
+    border: 3px solid var(--linen);
+    border-top-color: var(--purple);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .loading-text {
+    font-family: 'Playfair Display', serif; font-size: 1.1rem;
+    color: var(--text-light); font-style: italic;
+  }
+
+  header { text-align: center; margin-bottom: 2.5rem; }
+  .hex-icon {
+    display: inline-block; font-size: 2rem; margin-bottom: 0.5rem;
+    animation: sway 4s ease-in-out infinite;
+  }
+  @keyframes sway {
+    0%,100% { transform: rotate(-3deg); }
+    50% { transform: rotate(3deg); }
+  }
+  h1 {
+    font-family: 'Playfair Display', serif;
+    font-size: clamp(2rem, 5vw, 3.2rem);
+    color: var(--deep-purple); letter-spacing: 0.01em; line-height: 1.1;
+  }
+  h1 em { color: var(--purple); font-style: italic; }
+  .subtitle {
+    margin-top: 0.5rem; color: var(--text-light); font-size: 0.95rem;
+    font-weight: 300; letter-spacing: 0.08em; text-transform: uppercase;
+  }
+  .header-divider {
+    display: flex; align-items: center; gap: 1rem; margin: 1.5rem auto 0; max-width: 300px;
+  }
+  .header-divider::before, .header-divider::after {
+    content: ''; flex: 1; height: 1px; background: var(--lavender); opacity: 0.6;
+  }
+  .header-divider span { font-size: 1.2rem; }
+
+  /* SYNC STATUS */
+  .sync-bar {
+    display: flex; align-items: center; justify-content: flex-end;
+    gap: 0.4rem; margin-bottom: 1rem; font-size: 0.78rem; color: var(--text-light);
+    min-height: 1.2em;
+  }
+  .sync-dot {
+    width: 7px; height: 7px; border-radius: 50%; background: var(--lavender);
+    transition: background 0.3s;
+  }
+  .sync-dot.synced { background: var(--deep-sage); }
+  .sync-dot.syncing { background: var(--muted-gold); animation: pulse 1s ease-in-out infinite; }
+  .sync-dot.error { background: #c0405a; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+
+  .card {
+    background: var(--warm-white); border-radius: 16px; padding: 1.75rem;
+    box-shadow: 0 2px 16px var(--shadow), 0 1px 4px rgba(0,0,0,0.04);
+    border: 1px solid var(--card-border);
+  }
+  .card-title {
+    font-family: 'Playfair Display', serif; font-size: 1.1rem; color: var(--deep-purple);
+    margin-bottom: 1.25rem; display: flex; align-items: center; gap: 0.5rem;
+  }
+
+  /* PROGRESS BAR */
+  .progress-section { margin-bottom: 2rem; }
+  .progress-header {
+    display: flex; justify-content: space-between; align-items: flex-end;
+    margin-bottom: 0.75rem; flex-wrap: wrap; gap: 0.5rem;
+  }
+  .total-count { font-family: 'Playfair Display', serif; font-size: 1.5rem; color: var(--deep-purple); }
+  .total-count span { color: var(--purple); font-weight: 700; }
+  .total-pct { font-size: 0.85rem; color: var(--text-light); font-weight: 300; }
+
+  .progress-track {
+    position: relative; height: 56px; background: var(--linen); border-radius: 12px;
+    overflow: visible; display: flex; border: 1px solid rgba(176,159,212,0.3);
+  }
+  .segment { position: relative; height: 100%; overflow: hidden; flex-shrink: 0; }
+  .segment:first-child { border-radius: 11px 0 0 11px; }
+  .segment:last-child { border-radius: 0 11px 11px 0; }
+  .segment + .segment { border-left: 2px dashed rgba(255,255,255,0.5); }
+  .segment-fill {
+    height: 100%; transition: width 0.8s cubic-bezier(0.34,1.56,0.64,1);
+    position: relative; overflow: hidden;
+  }
+  .segment-fill::after {
+    content: ''; position: absolute; top: 0; left: 0; right: 0; height: 40%;
+    background: rgba(255,255,255,0.2);
+  }
+  .expected-marker {
+    position: absolute; top: -8px; width: 2px; height: calc(100% + 16px);
+    background: var(--deep-purple); opacity: 0.8; z-index: 10; pointer-events: none;
+  }
+  .expected-marker::before {
+    content: ''; position: absolute; top: 6px; left: 50%; transform: translateX(-50%);
+    width: 8px; height: 8px; background: var(--deep-purple); border-radius: 50%;
+  }
+  .expected-marker .marker-label {
+    position: absolute; top: -22px; left: 50%; transform: translateX(-50%);
+    white-space: nowrap; font-size: 0.68rem; font-weight: 700;
+    color: var(--deep-purple); background: var(--warm-white);
+    padding: 2px 5px; border-radius: 4px; border: 1px solid var(--linen); letter-spacing: 0.04em;
+  }
+  .segment-label {
+    position: absolute; bottom: 6px; left: 50%; transform: translateX(-50%);
+    font-size: 0.7rem; font-weight: 700; color: rgba(255,255,255,0.9);
+    letter-spacing: 0.06em; pointer-events: none; white-space: nowrap;
+  }
+  .segment-label.dark { color: rgba(45,31,74,0.45); }
+  .progress-legend {
+    display: flex; gap: 1.25rem; margin-top: 0.85rem; flex-wrap: wrap;
+    font-size: 0.78rem; color: var(--text-light);
+  }
+  .legend-item { display: flex; align-items: center; gap: 0.35rem; }
+  .legend-dot { width: 10px; height: 10px; border-radius: 3px; flex-shrink: 0; }
+
+  /* INPUT */
+  .input-section { margin-bottom: 2rem; }
+  .input-row { display: flex; gap: 1rem; align-items: flex-end; flex-wrap: wrap; }
+  .input-group { display: flex; flex-direction: column; gap: 0.4rem; flex: 1; min-width: 160px; }
+  .input-group label {
+    font-size: 0.8rem; font-weight: 700; color: var(--text-mid);
+    letter-spacing: 0.06em; text-transform: uppercase;
+  }
+  .input-group input {
+    padding: 0.75rem 1rem; border: 2px solid var(--linen); border-radius: 10px;
+    font-family: 'Playfair Display', serif; font-size: 1.3rem;
+    color: var(--text-dark); background: var(--cream); outline: none;
+    transition: border-color 0.2s, box-shadow 0.2s; text-align: center; width: 100%;
+  }
+  .input-group input:focus {
+    border-color: var(--lavender); box-shadow: 0 0 0 3px rgba(176,159,212,0.2);
+  }
+  .input-hint { font-size: 0.75rem; color: var(--text-light); margin-top: 0.2rem; }
+  .btn-add {
+    padding: 0.75rem 2rem;
+    background: linear-gradient(135deg, var(--deep-purple), var(--mid-purple));
+    color: white; border: none; border-radius: 10px;
+    font-family: 'Lato', sans-serif; font-size: 1rem; font-weight: 700;
+    letter-spacing: 0.04em; cursor: pointer;
+    transition: transform 0.15s, box-shadow 0.15s; white-space: nowrap; flex-shrink: 0;
+  }
+  .btn-add:hover { transform: translateY(-2px); box-shadow: 0 4px 16px rgba(90,61,153,0.35); }
+  .btn-add:active { transform: translateY(0); }
+  .btn-add:disabled { opacity: 0.6; cursor: not-allowed; transform: none; }
+  .toast { display: none; margin-top: 0.75rem; padding: 0.65rem 1rem; border-radius: 8px; font-size: 0.9rem; font-weight: 700; }
+  .toast.success { background: rgba(74,122,82,0.15); color: var(--deep-sage); display: block; }
+  .toast.error { background: rgba(124,92,191,0.12); color: var(--deep-purple); display: block; }
+
+  /* STATS */
+  .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 1rem; margin-bottom: 2rem; }
+  .stat-card {
+    background: var(--warm-white); border-radius: 12px; padding: 1.1rem 1.25rem;
+    border: 1px solid var(--card-border); box-shadow: 0 1px 8px var(--shadow); text-align: center;
+  }
+  .stat-value { font-family: 'Playfair Display', serif; font-size: 2rem; color: var(--purple); line-height: 1; margin-bottom: 0.25rem; }
+  .stat-label { font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.07em; color: var(--text-light); }
+  .stat-sub { font-size: 0.78rem; color: var(--text-mid); margin-top: 0.2rem; }
+  .stat-card.on-track .stat-value { color: var(--deep-sage); }
+  .stat-card.behind .stat-value { color: #a0386b; }
+  .stat-card.highlight .stat-value { color: var(--deep-purple); }
+
+  /* CHARTS */
+  .charts-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 480px), 1fr)); gap: 1.5rem; margin-bottom: 2rem; }
+  .chart-wrap { position: relative; height: 260px; }
+
+  /* LOG */
+  .log-section { margin-bottom: 2rem; }
+  .log-table-wrap { overflow-x: auto; border-radius: 10px; border: 1px solid var(--linen); }
+  table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+  thead tr { background: var(--linen); }
+  th { padding: 0.65rem 1rem; text-align: left; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-mid); font-weight: 700; }
+  td { padding: 0.6rem 1rem; border-bottom: 1px solid rgba(226,217,240,0.5); color: var(--text-dark); }
+  tbody tr:last-child td { border-bottom: none; }
+  tbody tr:hover { background: rgba(242,238,248,0.8); }
+  .delta-pos { color: var(--deep-sage); font-weight: 700; }
+  .delta-neg { color: #a0386b; font-weight: 700; }
+  .empty-log { text-align: center; padding: 2rem; color: var(--text-light); font-style: italic; font-family: 'Playfair Display', serif; }
+  .btn-delete {
+    background: none; border: 1px solid rgba(176,159,212,0.4); color: var(--text-light);
+    border-radius: 5px; padding: 2px 8px; font-size: 0.72rem; cursor: pointer;
+    transition: background 0.15s, color 0.15s, border-color 0.15s; white-space: nowrap;
+  }
+  .btn-delete:hover { background: rgba(160,56,107,0.08); color: #a0386b; border-color: #c06080; }
+
+  .hex-deco { position: fixed; opacity: 0.04; pointer-events: none; font-size: 10rem; z-index: 0; }
+  .hex-deco-1 { top: -2rem; right: -2rem; transform: rotate(15deg); }
+  .hex-deco-2 { bottom: 10%; left: -3rem; transform: rotate(-10deg); font-size: 7rem; }
+
+  @media (max-width: 600px) {
+    .input-row { flex-direction: column; }
+    .btn-add { width: 100%; }
+    .charts-grid { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<!-- Loading screen -->
+<div id="loading-screen">
+  <div class="spinner"></div>
+  <div class="loading-text">Loading your hexies…</div>
+</div>
+
+<div class="hex-deco hex-deco-1">⬡</div>
+<div class="hex-deco hex-deco-2">⬡</div>
+
+<div class="container">
+
+  <header>
+    <div class="hex-icon">🧵</div>
+    <h1>The <em>Hexie</em> Quilt</h1>
+    <p class="subtitle">English Paper Piecing · 1763 Hexagons · 2026 – 2029</p>
+    <div class="header-divider"><span>⬡</span></div>
+  </header>
+
+  <!-- Sync status -->
+  <div class="sync-bar">
+    <div class="sync-dot" id="sync-dot"></div>
+    <span id="sync-label">Connecting…</span>
+  </div>
+
+  <!-- PROGRESS BAR -->
+  <div class="card progress-section">
+    <div class="progress-header">
+      <div>
+        <div class="total-count"><span id="total-display">0</span> / 1763 hexies</div>
+        <div class="total-pct" id="total-pct">0% complete</div>
+      </div>
+      <div style="text-align:right; font-size:0.82rem; color:var(--text-light);">
+        Today: <strong id="today-date" style="color:var(--text-mid);"></strong>
+      </div>
+    </div>
+    <div class="progress-track" id="progress-track"></div>
+    <div class="progress-legend" id="progress-legend"></div>
+  </div>
+
+  <!-- INPUT -->
+  <div class="card input-section">
+    <div class="card-title">⬡ Log Today's Hexies</div>
+    <div class="input-row">
+      <div class="input-group">
+        <label>Hexies made today</label>
+        <input type="number" id="hexie-input" placeholder="0" step="1">
+        <div class="input-hint">Use a negative number to correct previous entries</div>
+      </div>
+      <button class="btn-add" id="add-btn" onclick="logHexies()">Add to Total ⬡</button>
+    </div>
+    <div class="toast" id="toast"></div>
+  </div>
+
+  <!-- STATS -->
+  <div class="stats-grid" id="stats-grid"></div>
+
+  <!-- CHARTS -->
+  <div class="charts-grid">
+    <div class="card">
+      <div class="card-title">⬡ <span id="year-donut-title">Year Progress</span></div>
+      <div class="chart-wrap"><canvas id="chart-overall"></canvas></div>
+    </div>
+    <div class="card">
+      <div class="card-title">⬡ Daily Pace — <span id="pace-year-label" style="color:var(--purple);"></span></div>
+      <div class="chart-wrap"><canvas id="chart-pace"></canvas></div>
+    </div>
+  </div>
+  <div class="card" style="margin-bottom:2rem;">
+    <div class="card-title">⬡ Cumulative Progress by Year</div>
+    <div class="chart-wrap" style="height:300px;"><canvas id="chart-yearly"></canvas></div>
+  </div>
+
+  <!-- LOG -->
+  <div class="card log-section">
+    <div class="card-title" style="justify-content:space-between;">
+      <span>⬡ Entry Log</span>
+      <button id="clear-all-btn" style="font-size:0.75rem; background:none; border:1px solid var(--linen); padding:4px 10px; border-radius:6px; cursor:pointer; color:var(--text-light);">Clear All</button>
+    </div>
+    <div class="log-table-wrap">
+      <table>
+        <thead>
+          <tr><th>Date</th><th>Entry</th><th>Running Total</th><th>vs. Expected</th><th></th></tr>
+        </thead>
+        <tbody id="log-body">
+          <tr><td colspan="5" class="empty-log">Loading…</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+</div>
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+import {
+  getFirestore, collection, doc, getDocs, setDoc, deleteDoc,
+  onSnapshot, query, orderBy, writeBatch
+} from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+
+// ─── FIREBASE INIT ────────────────────────────────────────
+const firebaseConfig = {
+  apiKey: "AIzaSyCy8dDCkBQGXS0hl_DFR7_rPVLfwgoiuZU",
+  authDomain: "the-hexie-quilt.firebaseapp.com",
+  projectId: "the-hexie-quilt",
+  storageBucket: "the-hexie-quilt.firebasestorage.app",
+  messagingSenderId: "124728476640",
+  appId: "1:124728476640:web:14c2bee970c78db8df6185"
+};
+
+const app = initializeApp(firebaseConfig);
+const db = getFirestore(app);
+const entriesCol = collection(db, "hexie-entries");
+
+// ─── CONFIG ───────────────────────────────────────────────
+const TOTAL_HEXIES = 1763;
+const START_COUNT = 154;
+
+const YEARS = [
+  { year: 2026, goal: 451, color: '#9370cc', fillColor: '#5a3d99' },
+  { year: 2027, goal: 451, color: '#7a9e7e', fillColor: '#4a7a52' },
+  { year: 2028, goal: 451, color: '#c9a84c', fillColor: '#a8853a' },
+  { year: 2029, goal: 410, color: '#c97ab0', fillColor: '#a04a84' },
+];
+const YEAR_CUMULATIVE = [451, 902, 1353, 1763];
+
+function isLeapYear(y) { return (y%4===0 && y%100!==0) || y%400===0; }
+function daysInYear(y) { return isLeapYear(y) ? 366 : 365; }
+function dailyRate(year) {
+  const y = YEARS.find(y => y.year === year);
+  return y ? y.goal / daysInYear(year) : 0;
+}
+
+// ─── DATE HELPERS ─────────────────────────────────────────
+function today() { return new Date().toISOString().slice(0,10); }
+function dayOfYear(dateStr) {
+  const d = new Date(dateStr + 'T12:00:00');
+  return Math.floor((d - new Date(d.getFullYear(), 0, 0)) / 86400000);
+}
+function getYear(dateStr) { return parseInt(dateStr.slice(0,4)); }
+function dayNumToDate(yr, doy) { return new Date(yr, 0, doy); }
+function dayNumToDateStr(yr, doy) { return dayNumToDate(yr, doy).toISOString().slice(0,10); }
+
+function expectedByDate(dateStr) {
+  const yr = getYear(dateStr);
+  const doy = dayOfYear(dateStr);
+  let base = 0;
+  for (const y of YEARS) {
+    if (y.year < yr) base += y.goal;
+    else break;
+  }
+  return Math.round(base + dailyRate(yr) * doy);
+}
+
+// ─── STATE ────────────────────────────────────────────────
+// entries: [{id, date, delta, running}] sorted oldest→newest
+let entries = [];
+
+function currentTotal() {
+  return entries.length === 0 ? START_COUNT : entries[entries.length - 1].running;
+}
+
+// Rebuild running totals from scratch (called after any mutation)
+function rebuildRunning() {
+  let prev = START_COUNT;
+  for (const e of entries) {
+    prev = prev + e.delta;
+    e.running = prev;
+  }
+}
+
+// ─── SYNC STATUS ──────────────────────────────────────────
+function setSyncStatus(state, label) {
+  const dot = document.getElementById('sync-dot');
+  const lbl = document.getElementById('sync-label');
+  dot.className = 'sync-dot ' + state;
+  lbl.textContent = label;
+}
+
+// ─── REAL-TIME LISTENER ───────────────────────────────────
+function startListener() {
+  const q = query(entriesCol, orderBy("date", "asc"), orderBy("id", "asc"));
+  onSnapshot(q,
+    (snapshot) => {
+      entries = snapshot.docs.map(d => ({ ...d.data(), firestoreId: d.id }));
+      rebuildRunning();
+      setSyncStatus('synced', 'Synced');
+      hideLoading();
+      render();
+    },
+    (err) => {
+      console.error(err);
+      setSyncStatus('error', 'Sync error — check console');
+      hideLoading();
+    }
+  );
+}
+
+function hideLoading() {
+  const ls = document.getElementById('loading-screen');
+  ls.classList.add('hidden');
+  setTimeout(() => ls.remove(), 500);
+}
+
+// ─── LOG HEXIES ───────────────────────────────────────────
+window.logHexies = async function() {
+  const input = document.getElementById('hexie-input');
+  const val = parseInt(input.value);
+  if (isNaN(val) || val === 0) { showToast('Please enter a non-zero number.', 'error'); return; }
+  const newTotal = currentTotal() + val;
+  if (newTotal < 0) { showToast('Total cannot go below 0.', 'error'); return; }
+
+  const btn = document.getElementById('add-btn');
+  btn.disabled = true;
+  setSyncStatus('syncing', 'Saving…');
+
+  const id = Date.now();
+  const entry = { id, date: today(), delta: val };
+  const docRef = doc(entriesCol, String(id));
+
+  try {
+    await setDoc(docRef, entry);
+    input.value = '';
+    showToast(val > 0 ? `+${val} hexies added!` : `Corrected by ${val}.`, 'success');
+  } catch(e) {
+    console.error(e);
+    showToast('Save failed. Check your internet connection.', 'error');
+    setSyncStatus('error', 'Save failed');
+  } finally {
+    btn.disabled = false;
+  }
+};
+
+window.deleteEntry = async function(firestoreId) {
+  setSyncStatus('syncing', 'Deleting…');
+  try {
+    await deleteDoc(doc(entriesCol, firestoreId));
+  } catch(e) {
+    console.error(e);
+    showToast('Delete failed. Check your connection.', 'error');
+    setSyncStatus('error', 'Delete failed');
+  }
+};
+
+window.clearLog = async function() {
+  if (!confirm('Clear all entries? This cannot be undone.')) return;
+  setSyncStatus('syncing', 'Clearing…');
+  try {
+    const snapshot = await getDocs(entriesCol);
+    const batch = writeBatch(db);
+    snapshot.docs.forEach(d => batch.delete(d.ref));
+    await batch.commit();
+  } catch(e) {
+    console.error(e);
+    showToast('Clear failed. Check your connection.', 'error');
+    setSyncStatus('error', 'Clear failed');
+  }
+};
+
+function showToast(msg, type) {
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.className = `toast ${type}`;
+  setTimeout(() => { t.className = 'toast'; }, 3500);
+}
+
+// ─── RENDER ───────────────────────────────────────────────
+let chartOverall, chartPace, chartYearly;
+
+function render() {
+  renderDate();
+  renderProgressBar();
+  renderStats();
+  renderCharts();
+  renderLog();
+}
+
+function renderDate() {
+  document.getElementById('today-date').textContent =
+    new Date().toLocaleDateString('en-US', { weekday:'short', month:'long', day:'numeric', year:'numeric' });
+}
+
+function renderProgressBar() {
+  const total = currentTotal();
+  const expected = expectedByDate(today());
+  const curYr = new Date().getFullYear();
+
+  document.getElementById('total-display').textContent = total.toLocaleString();
+  document.getElementById('total-pct').textContent = `${((total/TOTAL_HEXIES)*100).toFixed(1)}% of quilt complete`;
+
+  const track = document.getElementById('progress-track');
+  track.innerHTML = '';
+  const legend = document.getElementById('progress-legend');
+  legend.innerHTML = '';
+
+  YEARS.forEach((y, i) => {
+    const prevCum = i === 0 ? 0 : YEAR_CUMULATIVE[i-1];
+    const seg = document.createElement('div');
+    seg.className = `segment seg-${y.year}`;
+    seg.style.width = `${(y.goal / TOTAL_HEXIES) * 100}%`;
+    if (i === 0) seg.style.borderRadius = '11px 0 0 11px';
+    if (i === YEARS.length-1) seg.style.borderRadius = '0 11px 11px 0';
+
+    const filledInSeg = Math.max(0, Math.min(total - prevCum, y.goal));
+    const fillPct = (filledInSeg / y.goal) * 100;
+
+    const fill = document.createElement('div');
+    fill.className = 'segment-fill';
+    fill.style.width = `${fillPct}%`;
+    fill.style.background = `linear-gradient(90deg, ${y.color}, ${y.fillColor})`;
+    if (i === 0) fill.style.borderRadius = '10px 0 0 10px';
+    seg.appendChild(fill);
+
+    const lbl = document.createElement('div');
+    lbl.className = 'segment-label' + (fillPct < 40 ? ' dark' : '');
+    lbl.textContent = y.year;
+    seg.appendChild(lbl);
+
+    if (y.year === curYr) {
+      const expectedInSeg = Math.max(0, Math.min(expected - prevCum, y.goal));
+      const expPct = (expectedInSeg / y.goal) * 100;
+      if (expPct > 0 && expPct <= 100) {
+        const marker = document.createElement('div');
+        marker.className = 'expected-marker';
+        marker.style.left = `${expPct}%`;
+        const ml = document.createElement('div');
+        ml.className = 'marker-label';
+        ml.textContent = `Target: ${expected}`;
+        marker.appendChild(ml);
+        seg.appendChild(marker);
+      }
+    }
+    track.appendChild(seg);
+
+    const li = document.createElement('div');
+    li.className = 'legend-item';
+    li.innerHTML = `<div class="legend-dot" style="background:${y.color}"></div> ${y.year}: ${filledInSeg}/${y.goal}`;
+    legend.appendChild(li);
+  });
+
+  const le = document.createElement('div');
+  le.className = 'legend-item';
+  le.innerHTML = `<div style="width:10px;height:10px;border-radius:3px;border:2px solid var(--deep-purple);flex-shrink:0;"></div> Today's target: ${expected}`;
+  legend.appendChild(le);
+}
+
+function renderStats() {
+  const total = currentTotal();
+  const yr = new Date().getFullYear();
+  const doy = dayOfYear(today());
+  const yIdx = YEARS.findIndex(y => y.year === yr);
+  const yearGoal = yIdx >= 0 ? YEARS[yIdx].goal : 0;
+  const yearStart = yIdx > 0 ? YEAR_CUMULATIVE[yIdx-1] : 0;
+  const madeThisYear = Math.max(0, total - yearStart);
+  const yearEnd = YEAR_CUMULATIVE[yIdx] || 0;
+  const remainingYear = Math.max(0, yearEnd - total);
+  const expectedThisYear = Math.round(dailyRate(yr) * doy);
+  const diff = madeThisYear - expectedThisYear;
+  const onTrack = diff >= 0;
+  const daysLeftYear = Math.max(1, Math.ceil((new Date(`${yr}-12-31T23:59:59`) - new Date()) / 86400000));
+  const avgNeededYear = (remainingYear / daysLeftYear).toFixed(2);
+  const targetRate = (yearGoal / daysInYear(yr)).toFixed(2);
+
+  const stats = [
+    { value: madeThisYear, label: `Made in ${yr}`, sub: `goal: ${yearGoal} hexies`, cls: 'highlight' },
+    { value: diff >= 0 ? `+${diff}` : `${diff}`, label: onTrack ? `Ahead This Year` : `Behind This Year`, sub: `expected ${expectedThisYear} by today`, cls: onTrack ? 'on-track' : 'behind' },
+    { value: remainingYear, label: `Left for ${yr}`, sub: `by Dec 31, ${yr}`, cls: '' },
+    { value: avgNeededYear, label: `Avg/Day Needed`, sub: `${yr} target: ${targetRate}/day`, cls: '' },
+    { value: total, label: 'Total Hexies', sub: `${((total/TOTAL_HEXIES)*100).toFixed(1)}% of quilt`, cls: '' },
+    { value: (TOTAL_HEXIES - total).toLocaleString(), label: 'Overall Remaining', sub: `finish by end of 2029`, cls: '' },
+  ];
+
+  document.getElementById('stats-grid').innerHTML = stats.map(s => `
+    <div class="stat-card ${s.cls}">
+      <div class="stat-value">${s.value}</div>
+      <div class="stat-label">${s.label}</div>
+      <div class="stat-sub">${s.sub}</div>
+    </div>`).join('');
+}
+
+function renderCharts() {
+  renderYearDonut();
+  renderPaceChart();
+  renderYearlyChart();
+}
+
+function renderYearDonut() {
+  const ctx = document.getElementById('chart-overall').getContext('2d');
+  const yr = new Date().getFullYear();
+  const yIdx = YEARS.findIndex(y => y.year === yr);
+  const yearStart = yIdx > 0 ? YEAR_CUMULATIVE[yIdx-1] : 0;
+  const yearGoal = yIdx >= 0 ? YEARS[yIdx].goal : 451;
+  const total = currentTotal();
+  const madeThisYear = Math.max(0, total - yearStart);
+  const remaining = Math.max(0, yearGoal - madeThisYear);
+  document.getElementById('year-donut-title').textContent = `${yr} Year Progress`;
+  if (chartOverall) chartOverall.destroy();
+  chartOverall = new Chart(ctx, {
+    type: 'doughnut',
+    data: {
+      labels: [`Made in ${yr}`, 'Remaining'],
+      datasets: [{ data: [madeThisYear, remaining], backgroundColor: ['#7c5cbf','#e2d9f0'], borderColor: ['#5a3d99','#ccc0e0'], borderWidth: 2 }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false, cutout: '65%',
+      plugins: {
+        legend: { position: 'bottom', labels: { font: { family: 'Lato', size: 12 }, color: '#5a3d99', padding: 16 } },
+        tooltip: { callbacks: { label: c => ` ${c.label}: ${c.parsed} hexies` } }
+      }
+    },
+    plugins: [{
+      id: 'centerText',
+      afterDraw(chart) {
+        const { width, height, ctx } = chart;
+        ctx.save();
+        ctx.font = `bold 26px 'Playfair Display', serif`;
+        ctx.fillStyle = '#5a3d99'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillText(`${((madeThisYear/yearGoal)*100).toFixed(1)}%`, width/2, height/2 - 14);
+        ctx.font = `11px 'Lato', sans-serif`; ctx.fillStyle = '#8b74b8';
+        ctx.fillText(`of ${yr} goal`, width/2, height/2 + 12);
+        ctx.restore();
+      }
+    }]
+  });
+}
+
+function renderPaceChart() {
+  const ctx = document.getElementById('chart-pace').getContext('2d');
+  const yr = new Date().getFullYear();
+  const rate = dailyRate(yr);
+  const yIdx = YEARS.findIndex(y => y.year === yr);
+  const yearStart = yIdx > 0 ? YEAR_CUMULATIVE[yIdx-1] : 0;
+  const currentDoy = dayOfYear(today());
+  document.getElementById('pace-year-label').textContent = yr;
+
+  const labels = [], expectedLine = [], actualLine = [];
+  const yearEntries = entries.filter(e => getYear(e.date) === yr).sort((a,b) => a.date.localeCompare(b.date));
+
+  for (let d = 1; d <= currentDoy; d++) {
+    const dateObj = dayNumToDate(yr, d);
+    const isMonthStart = dateObj.getDate() === 1;
+    labels.push((d === 1 || d === currentDoy || isMonthStart)
+      ? dateObj.toLocaleDateString('en-US', { month:'short', day:'numeric' })
+      : '');
+    expectedLine.push(parseFloat((rate * d).toFixed(2)));
+    const relevant = yearEntries.filter(e => dayOfYear(e.date) <= d);
+    actualLine.push(relevant.length > 0 ? Math.max(0, relevant[relevant.length-1].running - yearStart) : 0);
+  }
+
+  if (chartPace) chartPace.destroy();
+  chartPace = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [
+        { label: 'Expected (cumulative)', data: expectedLine, borderColor: '#b09fd4', borderDash: [5,3], borderWidth: 1.5, pointRadius: 0, tension: 0, fill: false },
+        { label: 'Actual (cumulative)', data: actualLine, borderColor: '#7c5cbf', backgroundColor: 'rgba(124,92,191,0.12)', borderWidth: 2, pointRadius: 0, tension: 0, fill: true }
+      ]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false, animation: { duration: 400 },
+      plugins: {
+        legend: { position: 'bottom', labels: { font: { family: 'Lato', size: 11 }, color: '#5a3d99' } },
+        tooltip: { mode: 'index', intersect: false, callbacks: { title: (items) => dayNumToDate(yr, items[0].dataIndex + 1).toLocaleDateString('en-US', { month:'long', day:'numeric', year:'numeric' }) } }
+      },
+      scales: {
+        y: { beginAtZero: true, title: { display: true, text: `Hexies made in ${yr} (running total)`, color: '#8b74b8', font: { size: 11 } }, grid: { color: 'rgba(226,217,240,0.6)' }, ticks: { color: '#8b74b8', font: { size: 11 } } },
+        x: { grid: { display: false }, ticks: { color: '#8b74b8', font: { size: 10 }, maxRotation: 0, callback: function(val) { return this.getLabelForValue(val) || null; } } }
+      }
+    }
+  });
+}
+
+function renderYearlyChart() {
+  const ctx = document.getElementById('chart-yearly').getContext('2d');
+  const total = currentTotal();
+  const curYr = new Date().getFullYear();
+  const todayDoy = dayOfYear(today());
+  const todayFrac = todayDoy / daysInYear(curYr);
+
+  const points = [{ label: 'Start', xPos: 2025.0, goal: 0, actual: START_COUNT }];
+  points.push({ label: 'Today', xPos: curYr + todayFrac, goal: expectedByDate(today()), actual: total, isToday: true });
+  YEARS.forEach((y, i) => {
+    points.push({ label: `End ${y.year}`, xPos: y.year + 1.0, goal: YEAR_CUMULATIVE[i], actual: y.year < curYr ? Math.min(total, YEAR_CUMULATIVE[i]) : null });
+  });
+  points.sort((a,b) => a.xPos - b.xPos);
+
+  const labels = points.map(p => p.label);
+  const goalData = points.map(p => p.goal);
+  const actualData = points.map(p => p.actual != null ? p.actual : null);
+
+  if (chartYearly) chartYearly.destroy();
+  chartYearly = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [
+        { label: 'Goal Trajectory', data: goalData, borderColor: '#b09fd4', borderDash: [8,4], borderWidth: 2, pointRadius: 5, pointBackgroundColor: '#e2d9f0', pointBorderColor: '#9370cc', tension: 0.15, fill: false },
+        { label: 'Actual Progress', data: actualData, borderColor: '#5a3d99', backgroundColor: 'rgba(90,61,153,0.10)', borderWidth: 2.5, pointRadius: (c) => labels[c.dataIndex]==='Today'?8:5, pointBackgroundColor: (c) => labels[c.dataIndex]==='Today'?'#5a3d99':'#7c5cbf', tension: 0.15, fill: true, spanGaps: false }
+      ]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { position: 'bottom', labels: { font: { family: 'Lato', size: 11 }, color: '#5a3d99' } }, tooltip: { mode: 'index', intersect: false } },
+      scales: {
+        y: { beginAtZero: true, max: TOTAL_HEXIES, title: { display: true, text: 'Total Hexies Made', color: '#8b74b8', font: { size: 11 } }, grid: { color: 'rgba(226,217,240,0.6)' }, ticks: { color: '#8b74b8', font: { size: 11 } } },
+        x: { grid: { display: false }, ticks: { color: '#8b74b8', font: { size: 11 } } }
+      }
+    }
+  });
+}
+
+function renderLog() {
+  const tbody = document.getElementById('log-body');
+  if (entries.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="5" class="empty-log">No entries yet — start stitching! ⬡</td></tr>';
+    return;
+  }
+  tbody.innerHTML = [...entries].reverse().map(e => {
+    const expected = expectedByDate(e.date);
+    const diff = e.running - expected;
+    const diffStr = diff >= 0 ? `<span class="delta-pos">+${diff} ahead</span>` : `<span class="delta-neg">${diff} behind</span>`;
+    const deltaStr = e.delta > 0 ? `<span class="delta-pos">+${e.delta}</span>` : `<span class="delta-neg">${e.delta}</span>`;
+    const dateLabel = new Date(e.date + 'T12:00:00').toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' });
+    return `<tr>
+      <td>${dateLabel}</td><td>${deltaStr}</td>
+      <td>${e.running.toLocaleString()}</td><td>${diffStr}</td>
+      <td><button class="btn-delete" onclick="deleteEntry('${e.firestoreId}')">✕ Remove</button></td>
+    </tr>`;
+  }).join('');
+}
+
+// ─── INIT ─────────────────────────────────────────────────
+document.getElementById('hexie-input').addEventListener('keydown', e => { if (e.key === 'Enter') window.logHexies(); });
+document.getElementById('clear-all-btn').addEventListener('click', window.clearLog);
+
+startListener();
+</script>
+</body>
+</html>
