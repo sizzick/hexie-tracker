@@ -393,23 +393,22 @@ import {
   onSnapshot, query, orderBy, writeBatch
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
-// ─── FIREBASE INIT ────────────────────────────────────────
-const firebaseConfig = {
+// ─── FIREBASE ─────────────────────────────────────────────
+const app = initializeApp({
   apiKey: "AIzaSyCy8dDCkBQGXS0hl_DFR7_rPVLfwgoiuZU",
   authDomain: "the-hexie-quilt.firebaseapp.com",
   projectId: "the-hexie-quilt",
   storageBucket: "the-hexie-quilt.firebasestorage.app",
   messagingSenderId: "124728476640",
   appId: "1:124728476640:web:14c2bee970c78db8df6185"
-};
-
-const app = initializeApp(firebaseConfig);
+});
 const db = getFirestore(app);
 const entriesCol = collection(db, "hexie-entries");
 
-// ─── CONFIG ───────────────────────────────────────────────
+// ─── PROJECT CONFIG ───────────────────────────────────────
 const TOTAL_HEXIES = 1763;
-const START_COUNT = 154;
+const START_COUNT  = 154;
+const PROJECT_END_YEAR = 2029;
 
 const YEARS = [
   { year: 2026, goal: 451, color: '#9370cc', fillColor: '#5a3d99' },
@@ -417,305 +416,296 @@ const YEARS = [
   { year: 2028, goal: 451, color: '#c9a84c', fillColor: '#a8853a' },
   { year: 2029, goal: 410, color: '#c97ab0', fillColor: '#a04a84' },
 ];
-const YEAR_CUMULATIVE = [451, 902, 1353, 1763];
+// Pre-computed cumulative targets at end of each year (index-aligned with YEARS)
+const YEAR_CUMULATIVE = YEARS.reduce((acc, y) => {
+  acc.push((acc.at(-1) ?? 0) + y.goal);
+  return acc;
+}, []);
 
-function isLeapYear(y) { return (y%4===0 && y%100!==0) || y%400===0; }
-function daysInYear(y) { return isLeapYear(y) ? 366 : 365; }
+// Shared Chart.js legend/tick/grid defaults — avoids repeating across all three charts
+const CHART_DEFAULTS = {
+  legend:    { position: 'bottom', labels: { font: { family: 'Lato', size: 11 }, color: '#5a3d99' } },
+  gridColor: 'rgba(226,217,240,0.6)',
+  tickStyle: { color: '#8b74b8', font: { size: 11 } },
+  axisLabel: (text) => ({ display: true, text, color: '#8b74b8', font: { size: 11 } }),
+};
+
+// ─── DATE / MATH HELPERS ──────────────────────────────────
+const isLeapYear  = y  => (y % 4 === 0 && y % 100 !== 0) || y % 400 === 0;
+const daysInYear  = y  => isLeapYear(y) ? 366 : 365;
+const getYear     = s  => parseInt(s.slice(0, 4));
+const dayNumToDate = (yr, doy) => new Date(yr, 0, doy);
+
+function today() { return new Date().toISOString().slice(0, 10); }
+
+function dayOfYear(dateStr) {
+  const d = new Date(dateStr + 'T12:00:00');
+  return Math.floor((d - new Date(d.getFullYear(), 0, 0)) / 86400000);
+}
+
 function dailyRate(year) {
   const y = YEARS.find(y => y.year === year);
   return y ? y.goal / daysInYear(year) : 0;
 }
 
-// ─── DATE HELPERS ─────────────────────────────────────────
-function today() { return new Date().toISOString().slice(0,10); }
-function dayOfYear(dateStr) {
-  const d = new Date(dateStr + 'T12:00:00');
-  return Math.floor((d - new Date(d.getFullYear(), 0, 0)) / 86400000);
-}
-function getYear(dateStr) { return parseInt(dateStr.slice(0,4)); }
-function dayNumToDate(yr, doy) { return new Date(yr, 0, doy); }
-function dayNumToDateStr(yr, doy) { return dayNumToDate(yr, doy).toISOString().slice(0,10); }
-
 function expectedByDate(dateStr) {
-  const yr = getYear(dateStr);
-  const doy = dayOfYear(dateStr);
-  let base = 0;
-  for (const y of YEARS) {
-    if (y.year < yr) base += y.goal;
-    else break;
-  }
+  const yr = getYear(dateStr), doy = dayOfYear(dateStr);
+  const base = YEARS.filter(y => y.year < yr).reduce((s, y) => s + y.goal, 0);
   return Math.round(base + dailyRate(yr) * doy);
 }
 
-// ─── STATE ────────────────────────────────────────────────
-// entries: [{id, date, delta, running}] sorted oldest→newest
-let entries = [];
-
-function currentTotal() {
-  return entries.length === 0 ? START_COUNT : entries[entries.length - 1].running;
+// Returns all year-derived values for a given year in one place,
+// eliminating repeated yIdx / yearStart / yearGoal lookups across render functions.
+function getYearContext(yr) {
+  const idx   = YEARS.findIndex(y => y.year === yr);
+  const goal  = idx >= 0 ? YEARS[idx].goal : 0;
+  const start = idx > 0  ? YEAR_CUMULATIVE[idx - 1] : 0;
+  const end   = idx >= 0 ? YEAR_CUMULATIVE[idx] : 0;
+  const rate  = dailyRate(yr);
+  return { idx, goal, start, end, rate };
 }
 
-// Rebuild running totals from scratch (called after any mutation)
+// Snapshot of all "current moment" values passed into render functions,
+// so each function doesn't independently call new Date() / today() / dayOfYear().
+function getRenderSnapshot() {
+  const now     = new Date();
+  const yr      = now.getFullYear();
+  const todayStr = today();
+  const doy     = dayOfYear(todayStr);
+  const total   = currentTotal();
+  const yCtx    = getYearContext(yr);
+  return { now, yr, todayStr, doy, total, yCtx };
+}
+
+// ─── STATE ────────────────────────────────────────────────
+let entries = []; // [{id, date, delta, running, firestoreId}] sorted oldest→newest
+
+const currentTotal  = () => entries.length === 0 ? START_COUNT : entries.at(-1).running;
+
 function rebuildRunning() {
   let prev = START_COUNT;
-  for (const e of entries) {
-    prev = prev + e.delta;
-    e.running = prev;
-  }
+  for (const e of entries) { e.running = prev += e.delta; }
 }
 
-// ─── SYNC STATUS ──────────────────────────────────────────
+// ─── CACHED DOM REFS ──────────────────────────────────────
+const $  = id => document.getElementById(id);
+const syncDot   = $('sync-dot');
+const syncLabel = $('sync-label');
+
 function setSyncStatus(state, label) {
-  const dot = document.getElementById('sync-dot');
-  const lbl = document.getElementById('sync-label');
-  dot.className = 'sync-dot ' + state;
-  lbl.textContent = label;
+  syncDot.className = `sync-dot ${state}`;
+  syncLabel.textContent = label;
+}
+
+function showToast(msg, type) {
+  const t = $('toast');
+  t.textContent = msg;
+  t.className = `toast ${type}`;
+  setTimeout(() => { t.className = 'toast'; }, 3500);
+}
+
+// ─── FIRESTORE HELPERS ────────────────────────────────────
+// Wraps any Firestore operation with consistent syncing/error handling,
+// replacing the duplicated try/catch/setSyncStatus blocks in each action.
+async function withFirestore(label, syncingMsg, op) {
+  setSyncStatus('syncing', syncingMsg);
+  try {
+    await op();
+  } catch (e) {
+    console.error(e);
+    showToast(`${label} failed. Check your connection.`, 'error');
+    setSyncStatus('error', `${label} failed`);
+  }
 }
 
 // ─── REAL-TIME LISTENER ───────────────────────────────────
 function startListener() {
   const q = query(entriesCol, orderBy("date", "asc"), orderBy("id", "asc"));
   onSnapshot(q,
-    (snapshot) => {
+    snapshot => {
       entries = snapshot.docs.map(d => ({ ...d.data(), firestoreId: d.id }));
       rebuildRunning();
       setSyncStatus('synced', 'Synced');
       hideLoading();
       render();
     },
-    (err) => {
+    err => {
       console.error(err);
       setSyncStatus('error', 'Sync error');
-      // Show the on-screen error box instead of hiding the loading screen
-      document.getElementById('spinner').classList.add('hidden');
-      document.getElementById('loading-text').style.display = 'none';
-      document.getElementById('error-box').style.display = 'block';
-      document.getElementById('error-detail').textContent = 'Error: ' + (err.code || err.message || err);
+      $('spinner').classList.add('hidden');
+      $('loading-text').style.display = 'none';
+      $('error-box').style.display = 'block';
+      $('error-detail').textContent = 'Error: ' + (err.code || err.message || err);
     }
   );
 }
 
 function hideLoading() {
-  const ls = document.getElementById('loading-screen');
-  if (!ls) return; // already removed on a previous snapshot
+  const ls = $('loading-screen');
+  if (!ls) return;
   ls.classList.add('hidden');
   setTimeout(() => ls.remove(), 500);
 }
 
-// ─── LOG HEXIES ───────────────────────────────────────────
+// ─── ACTIONS ──────────────────────────────────────────────
 window.logHexies = async function() {
-  const input = document.getElementById('hexie-input');
-  const val = parseInt(input.value);
-  if (isNaN(val) || val === 0) { showToast('Please enter a non-zero number.', 'error'); return; }
-  const newTotal = currentTotal() + val;
-  if (newTotal < 0) { showToast('Total cannot go below 0.', 'error'); return; }
+  const input = $('hexie-input');
+  const val   = parseInt(input.value);
+  if (isNaN(val) || val === 0)        { showToast('Please enter a non-zero number.', 'error'); return; }
+  if (currentTotal() + val < 0)       { showToast('Total cannot go below 0.', 'error'); return; }
 
-  const btn = document.getElementById('add-btn');
+  const btn = $('add-btn');
   btn.disabled = true;
-  setSyncStatus('syncing', 'Saving…');
-
   const id = Date.now();
-  const entry = { id, date: today(), delta: val };
-  const docRef = doc(entriesCol, String(id));
-
-  try {
-    await setDoc(docRef, entry);
-    input.value = '';
-    showToast(val > 0 ? `+${val} hexies added!` : `Corrected by ${val}.`, 'success');
-  } catch(e) {
-    console.error(e);
-    showToast('Save failed. Check your internet connection.', 'error');
-    setSyncStatus('error', 'Save failed');
-  } finally {
-    btn.disabled = false;
-  }
+  await withFirestore('Save', 'Saving…', () => setDoc(doc(entriesCol, String(id)), { id, date: today(), delta: val }));
+  // Re-enable and clear input regardless of success/failure (snapshot will update UI)
+  btn.disabled = false;
+  if ($('toast').className.includes('error')) return; // don't clear on failure
+  input.value = '';
+  showToast(val > 0 ? `+${val} hexies added!` : `Corrected by ${val}.`, 'success');
 };
 
 window.deleteEntry = async function(firestoreId) {
-  setSyncStatus('syncing', 'Deleting…');
-  try {
-    await deleteDoc(doc(entriesCol, firestoreId));
-  } catch(e) {
-    console.error(e);
-    showToast('Delete failed. Check your connection.', 'error');
-    setSyncStatus('error', 'Delete failed');
-  }
+  await withFirestore('Delete', 'Deleting…', () => deleteDoc(doc(entriesCol, firestoreId)));
 };
 
 window.clearLog = async function() {
   if (!confirm('Clear all entries? This cannot be undone.')) return;
-  setSyncStatus('syncing', 'Clearing…');
-  try {
+  await withFirestore('Clear', 'Clearing…', async () => {
     const snapshot = await getDocs(entriesCol);
     const batch = writeBatch(db);
     snapshot.docs.forEach(d => batch.delete(d.ref));
     await batch.commit();
-  } catch(e) {
-    console.error(e);
-    showToast('Clear failed. Check your connection.', 'error');
-    setSyncStatus('error', 'Clear failed');
-  }
+  });
 };
-
-function showToast(msg, type) {
-  const t = document.getElementById('toast');
-  t.textContent = msg; t.className = `toast ${type}`;
-  setTimeout(() => { t.className = 'toast'; }, 3500);
-}
 
 // ─── RENDER ───────────────────────────────────────────────
 let chartOverall, chartPace, chartYearly;
 
 function render() {
-  renderDate();
-  renderProgressBar();
-  renderStats();
-  renderCharts();
+  // Single source of truth for the current moment — passed down to all render functions
+  const snap = getRenderSnapshot();
+  renderDate(snap);
+  renderProgressBar(snap);
+  renderStats(snap);
+  renderCharts(snap);
   renderLog();
 }
 
-function renderDate() {
-  document.getElementById('today-date').textContent =
-    new Date().toLocaleDateString('en-US', { weekday:'short', month:'long', day:'numeric', year:'numeric' });
+function renderDate({ now }) {
+  $('today-date').textContent = now.toLocaleDateString('en-US',
+    { weekday: 'short', month: 'long', day: 'numeric', year: 'numeric' });
 }
 
-function renderProgressBar() {
-  const total = currentTotal();
-  const expected = expectedByDate(today());
-  const curYr = new Date().getFullYear();
+function renderProgressBar({ yr, todayStr, total, yCtx }) {
+  const expected = expectedByDate(todayStr);
+  $('total-display').textContent = total.toLocaleString();
+  $('total-pct').textContent = `${((total / TOTAL_HEXIES) * 100).toFixed(1)}% of quilt complete`;
 
-  document.getElementById('total-display').textContent = total.toLocaleString();
-  document.getElementById('total-pct').textContent = `${((total/TOTAL_HEXIES)*100).toFixed(1)}% of quilt complete`;
-
-  const track = document.getElementById('progress-track');
-  track.innerHTML = '';
-  const legend = document.getElementById('progress-legend');
-  legend.innerHTML = '';
+  const track  = $('progress-track');
+  const legend = $('progress-legend');
+  track.innerHTML = legend.innerHTML = '';
 
   YEARS.forEach((y, i) => {
-    const prevCum = i === 0 ? 0 : YEAR_CUMULATIVE[i-1];
-    const seg = document.createElement('div');
-    seg.className = `segment seg-${y.year}`;
-    seg.style.width = `${(y.goal / TOTAL_HEXIES) * 100}%`;
-    if (i === 0) seg.style.borderRadius = '11px 0 0 11px';
-    if (i === YEARS.length-1) seg.style.borderRadius = '0 11px 11px 0';
-
+    const prevCum     = i === 0 ? 0 : YEAR_CUMULATIVE[i - 1];
     const filledInSeg = Math.max(0, Math.min(total - prevCum, y.goal));
-    const fillPct = (filledInSeg / y.goal) * 100;
+    const fillPct     = (filledInSeg / y.goal) * 100;
+    const isFirst     = i === 0, isLast = i === YEARS.length - 1;
 
-    const fill = document.createElement('div');
-    fill.className = 'segment-fill';
-    fill.style.width = `${fillPct}%`;
-    fill.style.background = `linear-gradient(90deg, ${y.color}, ${y.fillColor})`;
-    if (i === 0) fill.style.borderRadius = '10px 0 0 10px';
+    // Segment
+    const seg = Object.assign(document.createElement('div'), { className: `segment seg-${y.year}` });
+    seg.style.cssText = `width:${(y.goal / TOTAL_HEXIES) * 100}%;${isFirst ? 'border-radius:11px 0 0 11px;' : ''}${isLast ? 'border-radius:0 11px 11px 0;' : ''}`;
+
+    // Fill bar
+    const fill = Object.assign(document.createElement('div'), { className: 'segment-fill' });
+    fill.style.cssText = `width:${fillPct}%;background:linear-gradient(90deg,${y.color},${y.fillColor});${isFirst ? 'border-radius:10px 0 0 10px;' : ''}`;
     seg.appendChild(fill);
 
-    const lbl = document.createElement('div');
-    lbl.className = 'segment-label' + (fillPct < 40 ? ' dark' : '');
-    lbl.textContent = y.year;
-    seg.appendChild(lbl);
+    // Year label
+    seg.appendChild(Object.assign(document.createElement('div'),
+      { className: `segment-label${fillPct < 40 ? ' dark' : ''}`, textContent: y.year }));
 
-    if (y.year === curYr) {
-      const expectedInSeg = Math.max(0, Math.min(expected - prevCum, y.goal));
-      const expPct = (expectedInSeg / y.goal) * 100;
+    // Expected marker (current year only)
+    if (y.year === yr) {
+      const expPct = (Math.max(0, Math.min(expected - prevCum, y.goal)) / y.goal) * 100;
       if (expPct > 0 && expPct <= 100) {
-        const marker = document.createElement('div');
-        marker.className = 'expected-marker';
+        const marker = Object.assign(document.createElement('div'), { className: 'expected-marker' });
         marker.style.left = `${expPct}%`;
-        const ml = document.createElement('div');
-        ml.className = 'marker-label';
-        ml.textContent = `Target: ${expected}`;
-        marker.appendChild(ml);
+        marker.appendChild(Object.assign(document.createElement('div'),
+          { className: 'marker-label', textContent: `Target: ${expected}` }));
         seg.appendChild(marker);
       }
     }
     track.appendChild(seg);
 
-    const li = document.createElement('div');
-    li.className = 'legend-item';
-    li.innerHTML = `<div class="legend-dot" style="background:${y.color}"></div> ${y.year}: ${filledInSeg}/${y.goal}`;
-    legend.appendChild(li);
+    // Legend entry
+    legend.insertAdjacentHTML('beforeend',
+      `<div class="legend-item"><div class="legend-dot" style="background:${y.color}"></div> ${y.year}: ${filledInSeg}/${y.goal}</div>`);
   });
 
-  const le = document.createElement('div');
-  le.className = 'legend-item';
-  le.innerHTML = `<div style="width:10px;height:10px;border-radius:3px;border:2px solid var(--deep-purple);flex-shrink:0;"></div> Today's target: ${expected}`;
-  legend.appendChild(le);
+  legend.insertAdjacentHTML('beforeend',
+    `<div class="legend-item"><div style="width:10px;height:10px;border-radius:3px;border:2px solid var(--deep-purple);flex-shrink:0;"></div> Today's target: ${expected}</div>`);
 }
 
-function renderStats() {
-  const total = currentTotal();
-  const yr = new Date().getFullYear();
-  const doy = dayOfYear(today());
-  const yIdx = YEARS.findIndex(y => y.year === yr);
-  const yearGoal = yIdx >= 0 ? YEARS[yIdx].goal : 0;
-  const yearStart = yIdx > 0 ? YEAR_CUMULATIVE[yIdx-1] : 0;
-  const madeThisYear = Math.max(0, total - yearStart);
-  const yearEnd = YEAR_CUMULATIVE[yIdx] || 0;
-  const remainingYear = Math.max(0, yearEnd - total);
-  const expectedThisYear = Math.round(dailyRate(yr) * doy);
-  const diff = madeThisYear - expectedThisYear;
-  const onTrack = diff >= 0;
-  const daysLeftYear = Math.max(1, Math.ceil((new Date(`${yr}-12-31T23:59:59`) - new Date()) / 86400000));
-  const avgNeededYear = (remainingYear / daysLeftYear).toFixed(2);
-  const targetRate = (yearGoal / daysInYear(yr)).toFixed(2);
+function renderStats({ yr, doy, total, yCtx }) {
+  const { goal, start, end, rate } = yCtx;
+  const madeThisYear    = Math.max(0, total - start);
+  const remainingYear   = Math.max(0, end - total);
+  const expectedToday   = Math.round(rate * doy);
+  const diff            = madeThisYear - expectedToday;
+  const daysLeftYear    = Math.max(1, Math.ceil((new Date(`${yr}-12-31T23:59:59`) - new Date()) / 86400000));
 
   const stats = [
-    { value: madeThisYear, label: `Made in ${yr}`, sub: `goal: ${yearGoal} hexies`, cls: 'highlight' },
-    { value: diff >= 0 ? `+${diff}` : `${diff}`, label: onTrack ? `Ahead This Year` : `Behind This Year`, sub: `expected ${expectedThisYear} by today`, cls: onTrack ? 'on-track' : 'behind' },
-    { value: remainingYear, label: `Left for ${yr}`, sub: `by Dec 31, ${yr}`, cls: '' },
-    { value: avgNeededYear, label: `Avg/Day Needed`, sub: `${yr} target: ${targetRate}/day`, cls: '' },
-    { value: total, label: 'Total Hexies', sub: `${((total/TOTAL_HEXIES)*100).toFixed(1)}% of quilt`, cls: '' },
-    { value: (TOTAL_HEXIES - total).toLocaleString(), label: 'Overall Remaining', sub: `finish by end of 2029`, cls: '' },
+    { value: madeThisYear,                          label: `Made in ${yr}`,                           sub: `goal: ${goal} hexies`,                    cls: 'highlight' },
+    { value: diff >= 0 ? `+${diff}` : `${diff}`,   label: diff >= 0 ? 'Ahead This Year' : 'Behind This Year', sub: `expected ${expectedToday} by today`, cls: diff >= 0 ? 'on-track' : 'behind' },
+    { value: remainingYear,                         label: `Left for ${yr}`,                          sub: `by Dec 31, ${yr}`,                        cls: '' },
+    { value: (remainingYear / daysLeftYear).toFixed(2), label: 'Avg/Day Needed',                     sub: `${yr} target: ${(goal / daysInYear(yr)).toFixed(2)}/day`, cls: '' },
+    { value: total,                                 label: 'Total Hexies',                            sub: `${((total / TOTAL_HEXIES) * 100).toFixed(1)}% of quilt`, cls: '' },
+    { value: (TOTAL_HEXIES - total).toLocaleString(), label: 'Overall Remaining',                    sub: `finish by end of ${PROJECT_END_YEAR}`,    cls: '' },
   ];
 
-  document.getElementById('stats-grid').innerHTML = stats.map(s => `
-    <div class="stat-card ${s.cls}">
-      <div class="stat-value">${s.value}</div>
-      <div class="stat-label">${s.label}</div>
-      <div class="stat-sub">${s.sub}</div>
+  $('stats-grid').innerHTML = stats.map(({ value, label, sub, cls }) => `
+    <div class="stat-card ${cls}">
+      <div class="stat-value">${value}</div>
+      <div class="stat-label">${label}</div>
+      <div class="stat-sub">${sub}</div>
     </div>`).join('');
 }
 
-function renderCharts() {
-  renderYearDonut();
-  renderPaceChart();
-  renderYearlyChart();
+function renderCharts(snap) {
+  renderYearDonut(snap);
+  renderPaceChart(snap);
+  renderYearlyChart(snap);
 }
 
-// Update chart data in-place on subsequent renders — avoids destroy/recreate race condition
-// with the Firestore real-time listener firing on remote devices.
+// Updates chart data in-place after first creation — avoids destroy/recreate
+// race condition when Firestore snapshots arrive from a remote device.
 function updateChartData(chart, labels, datasetsData) {
   chart.data.labels = labels;
   datasetsData.forEach((data, i) => { chart.data.datasets[i].data = data; });
-  chart.update('none'); // instant, no animation flicker
+  chart.update('none'); // 'none' = instant, no animation flicker
 }
 
-function renderYearDonut() {
-  const yr = new Date().getFullYear();
-  const yIdx = YEARS.findIndex(y => y.year === yr);
-  const yearStart = yIdx > 0 ? YEAR_CUMULATIVE[yIdx-1] : 0;
-  const yearGoal = yIdx >= 0 ? YEARS[yIdx].goal : 451;
-  const total = currentTotal();
-  const madeThisYear = Math.max(0, total - yearStart);
-  const remaining = Math.max(0, yearGoal - madeThisYear);
-  document.getElementById('year-donut-title').textContent = `${yr} Year Progress`;
+function renderYearDonut({ yr, total, yCtx }) {
+  const { goal, start } = yCtx;
+  const madeThisYear = Math.max(0, total - start);
+  const remaining    = Math.max(0, goal - madeThisYear);
+  $('year-donut-title').textContent = `${yr} Year Progress`;
 
   if (chartOverall) {
     updateChartData(chartOverall, [`Made in ${yr}`, 'Remaining'], [[madeThisYear, remaining]]);
     return;
   }
-  // First-time creation
-  chartOverall = new Chart(document.getElementById('chart-overall').getContext('2d'), {
+  chartOverall = new Chart($('chart-overall').getContext('2d'), {
     type: 'doughnut',
     data: {
       labels: [`Made in ${yr}`, 'Remaining'],
-      datasets: [{ data: [madeThisYear, remaining], backgroundColor: ['#7c5cbf','#e2d9f0'], borderColor: ['#5a3d99','#ccc0e0'], borderWidth: 2 }]
+      datasets: [{ data: [madeThisYear, remaining], backgroundColor: ['#7c5cbf', '#e2d9f0'], borderColor: ['#5a3d99', '#ccc0e0'], borderWidth: 2 }]
     },
     options: {
       responsive: true, maintainAspectRatio: false, cutout: '65%',
       plugins: {
-        legend: { position: 'bottom', labels: { font: { family: 'Lato', size: 12 }, color: '#5a3d99', padding: 16 } },
+        legend: { ...CHART_DEFAULTS.legend, labels: { ...CHART_DEFAULTS.legend.labels, size: 12, padding: 16 } },
         tooltip: { callbacks: { label: c => ` ${c.label}: ${c.parsed} hexies` } }
       }
     },
@@ -723,124 +713,119 @@ function renderYearDonut() {
       id: 'centerText',
       afterDraw(chart) {
         const { width, height, ctx } = chart;
-        const made = chart.data.datasets[0].data[0];
-        const goal = made + chart.data.datasets[0].data[1];
+        const [made, rem] = chart.data.datasets[0].data;
         ctx.save();
-        ctx.font = `bold 26px 'Playfair Display', serif`;
-        ctx.fillStyle = '#5a3d99'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-        ctx.fillText(`${((made / goal) * 100).toFixed(1)}%`, width/2, height/2 - 14);
+        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.font = `bold 26px 'Playfair Display', serif`; ctx.fillStyle = '#5a3d99';
+        ctx.fillText(`${((made / (made + rem)) * 100).toFixed(1)}%`, width / 2, height / 2 - 14);
         ctx.font = `11px 'Lato', sans-serif`; ctx.fillStyle = '#8b74b8';
-        ctx.fillText(`of ${yr} goal`, width/2, height/2 + 12);
+        ctx.fillText(`of ${yr} goal`, width / 2, height / 2 + 12);
         ctx.restore();
       }
     }]
   });
 }
 
-function renderPaceChart() {
-  const yr = new Date().getFullYear();
-  const rate = dailyRate(yr);
-  const yIdx = YEARS.findIndex(y => y.year === yr);
-  const yearStart = yIdx > 0 ? YEAR_CUMULATIVE[yIdx-1] : 0;
-  const currentDoy = dayOfYear(today());
-  document.getElementById('pace-year-label').textContent = yr;
+function renderPaceChart({ yr, doy, yCtx }) {
+  const { start, rate } = yCtx;
+  $('pace-year-label').textContent = yr;
 
+  // Build one sorted pass through yearEntries — avoids a nested O(n²) filter per day
+  const yearEntries = entries.filter(e => getYear(e.date) === yr).sort((a, b) => a.date.localeCompare(b.date));
   const labels = [], expectedLine = [], actualLine = [];
-  const yearEntries = entries.filter(e => getYear(e.date) === yr).sort((a,b) => a.date.localeCompare(b.date));
+  let entryPtr = 0; // pointer into yearEntries
 
-  for (let d = 1; d <= currentDoy; d++) {
+  for (let d = 1; d <= doy; d++) {
     const dateObj = dayNumToDate(yr, d);
-    const isMonthStart = dateObj.getDate() === 1;
-    labels.push((d === 1 || d === currentDoy || isMonthStart)
-      ? dateObj.toLocaleDateString('en-US', { month:'short', day:'numeric' }) : '');
+    labels.push(d === 1 || d === doy || dateObj.getDate() === 1
+      ? dateObj.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '');
     expectedLine.push(parseFloat((rate * d).toFixed(2)));
-    const relevant = yearEntries.filter(e => dayOfYear(e.date) <= d);
-    actualLine.push(relevant.length > 0 ? Math.max(0, relevant[relevant.length-1].running - yearStart) : 0);
+
+    // Advance pointer to last entry on or before day d
+    while (entryPtr < yearEntries.length - 1 && dayOfYear(yearEntries[entryPtr + 1].date) <= d) entryPtr++;
+    const lastEntry = yearEntries[entryPtr];
+    actualLine.push(lastEntry && dayOfYear(lastEntry.date) <= d
+      ? Math.max(0, lastEntry.running - start) : 0);
   }
 
-  if (chartPace) {
-    updateChartData(chartPace, labels, [expectedLine, actualLine]);
-    return;
-  }
-  chartPace = new Chart(document.getElementById('chart-pace').getContext('2d'), {
+  if (chartPace) { updateChartData(chartPace, labels, [expectedLine, actualLine]); return; }
+  chartPace = new Chart($('chart-pace').getContext('2d'), {
     type: 'line',
     data: {
       labels,
       datasets: [
-        { label: 'Expected (cumulative)', data: expectedLine, borderColor: '#b09fd4', borderDash: [5,3], borderWidth: 1.5, pointRadius: 0, tension: 0, fill: false },
-        { label: 'Actual (cumulative)', data: actualLine, borderColor: '#7c5cbf', backgroundColor: 'rgba(124,92,191,0.12)', borderWidth: 2, pointRadius: 0, tension: 0, fill: true }
+        { label: 'Expected (cumulative)', data: expectedLine, borderColor: '#b09fd4', borderDash: [5, 3], borderWidth: 1.5, pointRadius: 0, tension: 0, fill: false },
+        { label: 'Actual (cumulative)',   data: actualLine,   borderColor: '#7c5cbf', backgroundColor: 'rgba(124,92,191,0.12)', borderWidth: 2, pointRadius: 0, tension: 0, fill: true }
       ]
     },
     options: {
       responsive: true, maintainAspectRatio: false, animation: { duration: 400 },
       plugins: {
-        legend: { position: 'bottom', labels: { font: { family: 'Lato', size: 11 }, color: '#5a3d99' } },
-        tooltip: { mode: 'index', intersect: false, callbacks: { title: (items) => dayNumToDate(yr, items[0].dataIndex + 1).toLocaleDateString('en-US', { month:'long', day:'numeric', year:'numeric' }) } }
+        legend: CHART_DEFAULTS.legend,
+        tooltip: { mode: 'index', intersect: false,
+          callbacks: { title: items => dayNumToDate(yr, items[0].dataIndex + 1)
+            .toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }) }
+        }
       },
       scales: {
-        y: { beginAtZero: true, title: { display: true, text: `Hexies made in ${yr} (running total)`, color: '#8b74b8', font: { size: 11 } }, grid: { color: 'rgba(226,217,240,0.6)' }, ticks: { color: '#8b74b8', font: { size: 11 } } },
-        x: { grid: { display: false }, ticks: { color: '#8b74b8', font: { size: 10 }, maxRotation: 0, callback: function(val) { return this.getLabelForValue(val) || null; } } }
+        y: { beginAtZero: true, title: CHART_DEFAULTS.axisLabel(`Hexies made in ${yr} (running total)`), grid: { color: CHART_DEFAULTS.gridColor }, ticks: CHART_DEFAULTS.tickStyle },
+        x: { grid: { display: false }, ticks: { ...CHART_DEFAULTS.tickStyle, font: { size: 10 }, maxRotation: 0, callback: function(v) { return this.getLabelForValue(v) || null; } } }
       }
     }
   });
 }
 
-function renderYearlyChart() {
-  const total = currentTotal();
-  const curYr = new Date().getFullYear();
-  const todayDoy = dayOfYear(today());
-  const todayFrac = todayDoy / daysInYear(curYr);
+function renderYearlyChart({ yr, todayStr, total, doy }) {
+  const todayFrac = doy / daysInYear(yr);
+  const points = [
+    { label: 'Start', xPos: 2025.0, goal: 0, actual: START_COUNT },
+    { label: 'Today', xPos: yr + todayFrac, goal: expectedByDate(todayStr), actual: total },
+    ...YEARS.map((y, i) => ({
+      label: `End ${y.year}`, xPos: y.year + 1.0,
+      goal: YEAR_CUMULATIVE[i],
+      actual: y.year < yr ? Math.min(total, YEAR_CUMULATIVE[i]) : null
+    }))
+  ].sort((a, b) => a.xPos - b.xPos);
 
-  const points = [{ label: 'Start', xPos: 2025.0, goal: 0, actual: START_COUNT }];
-  points.push({ label: 'Today', xPos: curYr + todayFrac, goal: expectedByDate(today()), actual: total });
-  YEARS.forEach((y, i) => {
-    points.push({ label: `End ${y.year}`, xPos: y.year + 1.0, goal: YEAR_CUMULATIVE[i], actual: y.year < curYr ? Math.min(total, YEAR_CUMULATIVE[i]) : null });
-  });
-  points.sort((a,b) => a.xPos - b.xPos);
+  const labels     = points.map(p => p.label);
+  const goalData   = points.map(p => p.goal);
+  const actualData = points.map(p => p.actual ?? null);
 
-  const labels = points.map(p => p.label);
-  const goalData = points.map(p => p.goal);
-  const actualData = points.map(p => p.actual != null ? p.actual : null);
-
-  if (chartYearly) {
-    updateChartData(chartYearly, labels, [goalData, actualData]);
-    return;
-  }
-  chartYearly = new Chart(document.getElementById('chart-yearly').getContext('2d'), {
+  if (chartYearly) { updateChartData(chartYearly, labels, [goalData, actualData]); return; }
+  chartYearly = new Chart($('chart-yearly').getContext('2d'), {
     type: 'line',
     data: {
       labels,
       datasets: [
-        { label: 'Goal Trajectory', data: goalData, borderColor: '#b09fd4', borderDash: [8,4], borderWidth: 2, pointRadius: 5, pointBackgroundColor: '#e2d9f0', pointBorderColor: '#9370cc', tension: 0.15, fill: false },
+        { label: 'Goal Trajectory', data: goalData,   borderColor: '#b09fd4', borderDash: [8, 4], borderWidth: 2, pointRadius: 5, pointBackgroundColor: '#e2d9f0', pointBorderColor: '#9370cc', tension: 0.15, fill: false },
         { label: 'Actual Progress', data: actualData, borderColor: '#5a3d99', backgroundColor: 'rgba(90,61,153,0.10)', borderWidth: 2.5,
-          pointRadius: (c) => labels[c.dataIndex]==='Today'?8:5,
-          pointBackgroundColor: (c) => labels[c.dataIndex]==='Today'?'#5a3d99':'#7c5cbf',
+          pointRadius:          c => labels[c.dataIndex] === 'Today' ? 8 : 5,
+          pointBackgroundColor: c => labels[c.dataIndex] === 'Today' ? '#5a3d99' : '#7c5cbf',
           tension: 0.15, fill: true, spanGaps: false }
       ]
     },
     options: {
       responsive: true, maintainAspectRatio: false,
-      plugins: { legend: { position: 'bottom', labels: { font: { family: 'Lato', size: 11 }, color: '#5a3d99' } }, tooltip: { mode: 'index', intersect: false } },
+      plugins: { legend: CHART_DEFAULTS.legend, tooltip: { mode: 'index', intersect: false } },
       scales: {
-        y: { beginAtZero: true, max: TOTAL_HEXIES, title: { display: true, text: 'Total Hexies Made', color: '#8b74b8', font: { size: 11 } }, grid: { color: 'rgba(226,217,240,0.6)' }, ticks: { color: '#8b74b8', font: { size: 11 } } },
-        x: { grid: { display: false }, ticks: { color: '#8b74b8', font: { size: 11 } } }
+        y: { beginAtZero: true, max: TOTAL_HEXIES, title: CHART_DEFAULTS.axisLabel('Total Hexies Made'), grid: { color: CHART_DEFAULTS.gridColor }, ticks: CHART_DEFAULTS.tickStyle },
+        x: { grid: { display: false }, ticks: CHART_DEFAULTS.tickStyle }
       }
     }
   });
 }
 
 function renderLog() {
-  const tbody = document.getElementById('log-body');
+  const tbody = $('log-body');
   if (entries.length === 0) {
     tbody.innerHTML = '<tr><td colspan="5" class="empty-log">No entries yet — start stitching! ⬡</td></tr>';
     return;
   }
   tbody.innerHTML = [...entries].reverse().map(e => {
-    const expected = expectedByDate(e.date);
-    const diff = e.running - expected;
-    const diffStr = diff >= 0 ? `<span class="delta-pos">+${diff} ahead</span>` : `<span class="delta-neg">${diff} behind</span>`;
+    const diff     = e.running - expectedByDate(e.date);
+    const diffStr  = diff >= 0 ? `<span class="delta-pos">+${diff} ahead</span>` : `<span class="delta-neg">${diff} behind</span>`;
     const deltaStr = e.delta > 0 ? `<span class="delta-pos">+${e.delta}</span>` : `<span class="delta-neg">${e.delta}</span>`;
-    const dateLabel = new Date(e.date + 'T12:00:00').toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' });
+    const dateLabel = new Date(e.date + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
     return `<tr>
       <td>${dateLabel}</td><td>${deltaStr}</td>
       <td>${e.running.toLocaleString()}</td><td>${diffStr}</td>
@@ -850,9 +835,8 @@ function renderLog() {
 }
 
 // ─── INIT ─────────────────────────────────────────────────
-document.getElementById('hexie-input').addEventListener('keydown', e => { if (e.key === 'Enter') window.logHexies(); });
-document.getElementById('clear-all-btn').addEventListener('click', window.clearLog);
-
+$('hexie-input').addEventListener('keydown', e => { if (e.key === 'Enter') window.logHexies(); });
+$('clear-all-btn').addEventListener('click', window.clearLog);
 startListener();
 </script>
 </body>
