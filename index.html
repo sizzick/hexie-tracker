@@ -212,6 +212,10 @@
   .input-group input:focus {
     border-color: var(--lavender); box-shadow: 0 0 0 3px rgba(176,159,212,0.2);
   }
+  .input-group input[type="date"] {
+    font-family: 'Lato', sans-serif; font-size: 1rem; color: var(--text-dark);
+    cursor: pointer;
+  }
   .input-hint { font-size: 0.75rem; color: var(--text-light); margin-top: 0.2rem; }
   .btn-add {
     padding: 0.75rem 2rem;
@@ -335,10 +339,14 @@ service cloud.firestore {
 
   <!-- INPUT -->
   <div class="card input-section">
-    <div class="card-title">⬡ Log Today's Hexies</div>
+    <div class="card-title">⬡ Log Your Hexies</div>
     <div class="input-row">
       <div class="input-group">
-        <label>Hexies made today</label>
+        <label>Date</label>
+        <input type="date" id="date-input">
+      </div>
+      <div class="input-group">
+        <label>Hexies made</label>
         <input type="number" id="hexie-input" placeholder="0" step="1">
         <div class="input-hint">Use a negative number to correct previous entries</div>
       </div>
@@ -368,10 +376,7 @@ service cloud.firestore {
 
   <!-- LOG -->
   <div class="card log-section">
-    <div class="card-title" style="justify-content:space-between;">
-      <span>⬡ Entry Log</span>
-      <button id="clear-all-btn" style="font-size:0.75rem; background:none; border:1px solid var(--linen); padding:4px 10px; border-radius:6px; cursor:pointer; color:var(--text-light);">Clear All</button>
-    </div>
+    <div class="card-title">⬡ Entry Log</div>
     <div class="log-table-wrap">
       <table>
         <thead>
@@ -389,8 +394,8 @@ service cloud.firestore {
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import {
-  getFirestore, collection, doc, getDocs, setDoc, deleteDoc,
-  onSnapshot, query, orderBy, writeBatch
+  getFirestore, collection, doc, setDoc, deleteDoc,
+  onSnapshot, query, orderBy
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
 // ─── FIREBASE ─────────────────────────────────────────────
@@ -549,34 +554,26 @@ function hideLoading() {
 
 // ─── ACTIONS ──────────────────────────────────────────────
 window.logHexies = async function() {
-  const input = $('hexie-input');
-  const val   = parseInt(input.value);
-  if (isNaN(val) || val === 0)        { showToast('Please enter a non-zero number.', 'error'); return; }
-  if (currentTotal() + val < 0)       { showToast('Total cannot go below 0.', 'error'); return; }
+  const input     = $('hexie-input');
+  const dateInput = $('date-input');
+  const val       = parseInt(input.value);
+  const entryDate = dateInput.value || today(); // fall back to today if blank
+  if (isNaN(val) || val === 0)  { showToast('Please enter a non-zero number.', 'error'); return; }
+  if (currentTotal() + val < 0) { showToast('Total cannot go below 0.', 'error'); return; }
 
   const btn = $('add-btn');
   btn.disabled = true;
   const id = Date.now();
-  await withFirestore('Save', 'Saving…', () => setDoc(doc(entriesCol, String(id)), { id, date: today(), delta: val }));
-  // Re-enable and clear input regardless of success/failure (snapshot will update UI)
+  await withFirestore('Save', 'Saving…', () => setDoc(doc(entriesCol, String(id)), { id, date: entryDate, delta: val }));
   btn.disabled = false;
-  if ($('toast').className.includes('error')) return; // don't clear on failure
+  if ($('toast').className.includes('error')) return;
   input.value = '';
-  showToast(val > 0 ? `+${val} hexies added!` : `Corrected by ${val}.`, 'success');
+  dateInput.value = today(); // reset date back to today after saving
+  showToast(val > 0 ? `+${val} hexies logged for ${entryDate}!` : `Corrected by ${val} on ${entryDate}.`, 'success');
 };
 
 window.deleteEntry = async function(firestoreId) {
   await withFirestore('Delete', 'Deleting…', () => deleteDoc(doc(entriesCol, firestoreId)));
-};
-
-window.clearLog = async function() {
-  if (!confirm('Clear all entries? This cannot be undone.')) return;
-  await withFirestore('Clear', 'Clearing…', async () => {
-    const snapshot = await getDocs(entriesCol);
-    const batch = writeBatch(db);
-    snapshot.docs.forEach(d => batch.delete(d.ref));
-    await batch.commit();
-  });
 };
 
 // ─── RENDER ───────────────────────────────────────────────
@@ -835,8 +832,8 @@ function renderLog() {
 }
 
 // ─── INIT ─────────────────────────────────────────────────
+$('date-input').value = today();
 $('hexie-input').addEventListener('keydown', e => { if (e.key === 'Enter') window.logHexies(); });
-$('clear-all-btn').addEventListener('click', window.clearLog);
 startListener();
 </script>
 </body>
