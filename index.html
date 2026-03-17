@@ -197,8 +197,13 @@
 
   /* INPUT */
   .input-section { margin-bottom: 2rem; }
-  .input-row { display: flex; gap: 1rem; align-items: flex-end; flex-wrap: wrap; }
-  .input-group { display: flex; flex-direction: column; gap: 0.4rem; flex: 1; min-width: 160px; }
+  .input-fields {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1rem;
+    margin-bottom: 1rem;
+  }
+  .input-group { display: flex; flex-direction: column; gap: 0.4rem; }
   .input-group label {
     font-size: 0.8rem; font-weight: 700; color: var(--text-mid);
     letter-spacing: 0.06em; text-transform: uppercase;
@@ -218,12 +223,12 @@
   }
   .input-hint { font-size: 0.75rem; color: var(--text-light); margin-top: 0.2rem; }
   .btn-add {
-    padding: 0.75rem 2rem;
+    width: 100%; padding: 0.75rem 2rem;
     background: linear-gradient(135deg, var(--deep-purple), var(--mid-purple));
     color: white; border: none; border-radius: 10px;
     font-family: 'Lato', sans-serif; font-size: 1rem; font-weight: 700;
     letter-spacing: 0.04em; cursor: pointer;
-    transition: transform 0.15s, box-shadow 0.15s; white-space: nowrap; flex-shrink: 0;
+    transition: transform 0.15s, box-shadow 0.15s;
   }
   .btn-add:hover { transform: translateY(-2px); box-shadow: 0 4px 16px rgba(90,61,153,0.35); }
   .btn-add:active { transform: translateY(0); }
@@ -273,8 +278,7 @@
   .hex-deco-2 { bottom: 10%; left: -3rem; transform: rotate(-10deg); font-size: 7rem; }
 
   @media (max-width: 600px) {
-    .input-row { flex-direction: column; }
-    .btn-add { width: 100%; }
+    .input-fields { grid-template-columns: 1fr; }
     .charts-grid { grid-template-columns: 1fr; }
   }
 </style>
@@ -340,7 +344,7 @@ service cloud.firestore {
   <!-- INPUT -->
   <div class="card input-section">
     <div class="card-title">⬡ Log Your Hexies</div>
-    <div class="input-row">
+    <div class="input-fields">
       <div class="input-group">
         <label>Date</label>
         <input type="date" id="date-input">
@@ -350,8 +354,8 @@ service cloud.firestore {
         <input type="number" id="hexie-input" placeholder="0" step="1">
         <div class="input-hint">Use a negative number to correct previous entries</div>
       </div>
-      <button class="btn-add" id="add-btn" onclick="logHexies()">Add to Total ⬡</button>
     </div>
+    <button class="btn-add" id="add-btn" onclick="logHexies()">Add to Total ⬡</button>
     <div class="toast" id="toast"></div>
   </div>
 
